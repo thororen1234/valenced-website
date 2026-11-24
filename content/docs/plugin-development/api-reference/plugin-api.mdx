@@ -8,7 +8,7 @@ Lifecycle methods receive a scoped `api` argument (`PreInitPluginApi`, `InitPlug
 
 ```ts
 start(api) {
-    const { cleanup, decorate, plugin, unscoped, jsonStorage, logger } = api
+    const { cleanup, decorate, plugin, settings, unscoped, jsonStorage, logger } = api
 }
 ```
 
@@ -31,6 +31,17 @@ Callbacks execute in reverse registration order when the plugin unloads.
 ## `plugin`
 
 The [`Plugin` instance](/docs/plugin-development/api-reference/lifecycles#the-plugin-instance) representing the current plugin, exposing manifest data, error logs, and state methods (`disable()`, `stop()`, `requireReload()`).
+
+## `settings`
+
+Reads, writes and subscribes to the settings declared in your manifest. Available from `preInit`. See [Settings](/docs/plugin-development/api-reference/settings).
+
+```ts
+start({ settings, cleanup }) {
+    const enabled = settings.get<boolean>('enabled')
+    cleanup(settings.subscribe('enabled', value => console.log(value)))
+}
+```
 
 ## `unscoped`
 
@@ -205,6 +216,8 @@ SettingsComponent({ api }: { api: PluginApi }) {
     // ...
 }
 ```
+
+For most plugins, [manifest settings](/docs/plugin-development/api-reference/settings) are enough, and they also show in Phoenix. If a plugin has both, the page shows the generated settings first and `SettingsComponent` below them. `SettingsComponent` only renders on React Native.
 
 ## Type definitions
 

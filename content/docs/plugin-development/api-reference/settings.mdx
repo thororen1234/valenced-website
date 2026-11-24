@@ -1,0 +1,168 @@
+---
+title: Settings
+description: Declare plugin settings in the manifest and let Valenced render them.
+icon: SlidersHorizontal
+---
+
+Plugins declare their settings in a `settings` array in `manifest.json`. Valenced renders a settings page for them in both React Native and [Phoenix](/docs/plugin-development/api-reference/phoenix), stores the values, and gives your plugin an API to read and change them.
+
+```json title="plugins/my-plugin/manifest.json"
+{
+    "settings": [
+        { "key": "enabled", "type": "switch", "label": "Show greeting", "default": true },
+        {
+            "key": "greeting",
+            "type": "text",
+            "label": "Greeting",
+            "default": "Hello",
+            "maxLength": 32,
+            "showIf": { "key": "enabled", "equals": true }
+        },
+        {
+            "key": "size",
+            "type": "number",
+            "label": "Size",
+            "section": "Appearance",
+            "default": 8,
+            "min": 1,
+            "max": 64,
+            "integer": true
+        }
+    ]
+}
+```
+
+## Setting types
+
+| Type | Value | Notes |
+| --- | --- | --- |
+| `switch` | `boolean` | |
+| `text` | `string` | Supports `minLength`, `maxLength` and `pattern`. |
+| `number` | `number` | Supports `min`, `max` and `integer`. |
+| `select` | `string` | Needs `options`. The default must match an option's `value`. |
+| `color` | `string` | `#RRGGBB` or `#AARRGGBB`. |
+| `list` | `string[]` or `number[]` | Needs `item` (`text` or `number`). Supports `maxItems`. Each item follows the `text` or `number` rules above. |
+| `object` | object | A group of child settings in `settings`. Has no `default` of its own. |
+
+## Fields
+
+| Field | Required | Description |
+| --- | :-: | --- |
+| `key` | Yes | Unique among its siblings. Cannot contain dots. |
+| `type` | Yes | One of the types above. |
+| `label` | Yes | Shown in the settings page. |
+| `default` | Yes, except `object` | Value used until the user changes it. Must be valid for the type. |
+| `description` | No | Shown under the label. |
+| `section` | No | Groups settings under a heading. Settings with the same `section` show together. |
+| `min`, `max` | No | Bounds for `number`, and for the items of a `list` of numbers. |
+| `integer` | No | Only allows whole numbers. |
+| `minLength`, `maxLength` | No | Length bounds for `text`, and for the items of a `list` of text. |
+| `pattern` | No | A regular expression the text must match. |
+| `options` | `select` only | `{ "value": string, "label": string }` entries. Values must be unique. |
+| `item` | `list` only | `text` or `number`. |
+| `maxItems` | No | Most items a `list` can hold. |
+| `settings` | `object` only | The child settings. Objects cannot contain other objects. |
+| `showIf` | No | `{ "key": string, "equals": value }`. Only shows the setting while the sibling setting named by `key` equals `equals`. Inside an object, `key` names another child of the same object. |
+
+Valenced checks the `settings` array when it installs the plugin. A field that does not fit the type, such as `min` on a `text` setting or a `default` outside the bounds, makes the install fail with an error naming the setting.
+
+## Storing values
+
+Values live in `files/valenced/plugins/settings/<id>.json` in Discord's data directory. Reads merge the saved values with the defaults from the manifest, so a setting you add in an update starts at its default.
+
+- Values are shared across plugin slots and across both clients.
+- A stored value that no longer fits the manifest, such as a removed key or a number outside new bounds, is ignored and the default is used.
+- Clearing the plugin's data resets every setting to its default. Uninstalling the plugin deletes the file.
+
+<Callout title="Moving from jsonStorage">
+    If the plugin has no settings file yet, Valenced copies matching values from the plugin's `storage.json` (the default [`jsonStorage`](/docs/plugin-development/api-reference/plugin-api#jsonstorage) file) into it once. Keys that match a declared setting and hold a valid value are kept. Give your settings the same keys as your old `jsonStorage` fields to keep users' choices.
+</Callout>
+
+## Object settings
+
+An `object` groups child settings. Its value is an object holding every child, with defaults filled in:
+
+```json
+{
+    "key": "limits",
+    "type": "object",
+    "label": "Limits",
+    "settings": [
+        { "key": "soft", "type": "number", "label": "Soft limit", "default": 1800 },
+        { "key": "hard", "type": "number", "label": "Hard limit", "default": 2000 }
+    ]
+}
+```
+
+Use a dotted path to read or write one child:
+
+```ts
+settings.get('limits')      // { soft: 1800, hard: 2000 }
+settings.get('limits.soft') // 1800
+await settings.set('limits.soft', 1500)
+```
+
+Writing `limits.soft` notifies subscribers of both `limits.soft` and `limits`.
+
+## JavaScript API
+
+Every lifecycle receives `api.settings`, from `preInit` on:
+
+```ts
+export default plugin({
+    start({ settings, cleanup }) {
+        const greeting = settings.get<string>('greeting')
+
+        cleanup(
+            settings.subscribe<boolean>('enabled', enabled => {
+                console.log('enabled changed to', enabled)
+            }),
+        )
+    },
+})
+```
+
+```ts
+interface PluginValueSettingsApi {
+    get<T extends PluginSettingValue = PluginSettingValue>(key: string): T
+    set(key: string, value: PluginSettingValue): Promise<void>
+    subscribe<T extends PluginSettingValue = PluginSettingValue>(
+        key: string,
+        listener: (value: T) => void,
+    ): () => void
+}
+```
+
+- `get` reads the current value. It throws for a key the manifest does not declare.
+- `set` saves a value. It rejects a key the manifest does not declare or a value that does not fit the setting.
+- `subscribe` runs the listener whenever the value changes, including changes from the settings page and from your plugin's Kotlin side. It returns a function that removes the listener. Pass it to `cleanup` so it is removed when the plugin stops.
+
+## Kotlin API
+
+Native plugins read the same values through `settings` on the plugin scope:
+
+```kotlin
+val myPlugin = plugin {
+    start {
+        log.i("Greeting: ${settings.get("greeting")}")
+
+        val subscription = settings.subscribe("enabled") { enabled ->
+            log.i("enabled changed to $enabled")
+        }
+    }
+}
+```
+
+```kotlin
+interface PluginSettings {
+    fun get(key: String): Any?
+    fun set(key: String, value: Any?)
+    fun subscribe(key: String, listener: (Any?) -> Unit): AutoCloseable
+}
+```
+
+Values come back as plain Kotlin values: `Boolean`, `String`, `Int`, `Long` or `Double`, `List`, and `Map` for objects. `set` writes synchronously and notifies the JavaScript side. Close the returned `AutoCloseable` to stop listening.
+
+## Custom settings pages
+
+A plugin can still provide a React [`SettingsComponent`](/docs/plugin-development/api-reference/plugin-api#settingscomponent) on React Native. When a plugin has both, the settings page shows the generated settings first and the component below them. Phoenix only shows the generated settings.

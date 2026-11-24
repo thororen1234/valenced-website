@@ -1,0 +1,147 @@
+---
+title: Phoenix
+description: Run plugin code in Discord's native Phoenix client.
+icon: Bird
+---
+
+Phoenix is Discord's new native client. It ships in the same app as the React Native client, and Valenced runs in both. Phoenix has no React Native, no Metro and no React, so a plugin's `dist.script` bundle cannot run there.
+
+A plugin runs code in Phoenix through a separate bundle named by `dist.phoenix` in its manifest:
+
+```json title="plugins/my-plugin/manifest.json"
+{
+    "dist": {
+        "script": "index.js",
+        "phoenix": "phoenix.js"
+    }
+}
+```
+
+React Native loads `dist.script` and Phoenix loads `dist.phoenix`. A plugin can ship either one or both. Both read the same [settings](/docs/plugin-development/api-reference/settings).
+
+<Callout title="Plugins without dist.phoenix">
+    Phoenix lists every installed plugin. Users can enable, disable, configure and uninstall them there. The JavaScript of a plugin without `dist.phoenix` does not run in Phoenix.
+</Callout>
+
+## The bundle
+
+The [CLI](/docs/plugin-development/cli/build#phoenix-bundles) builds `phoenix.ts` or `phoenix.js` into `build/phoenix/index.js` when the manifest sets `dist.phoenix`. Import the Phoenix API from `@valenced/phoenix`:
+
+```ts title="plugins/my-plugin/js/phoenix.ts"
+import { on } from '@valenced/phoenix/gateway'
+
+export default plugin({
+    start({ settings, logger, cleanup }) {
+        cleanup(
+            on('MESSAGE_CREATE', message => {
+                if (settings.get('hideBots') && message.author?.bot) return false
+            }),
+        )
+        logger.log('started')
+    },
+})
+```
+
+`react`, `react-native` and the other `@valenced/*` modules are not available in Phoenix. The CLI fails the build when a Phoenix entry imports them.
+
+You can also write the bundle by hand. Valenced evaluates the file the same way as a [`dist.script` bundle](/docs/plugin-development/cli/build#output-format-and-exports): the code is placed after `return` and run with `valenced` and `plugin` as arguments. The result must be an object whose `default` property holds the plugin options.
+
+```js title="plugins/my-plugin/phoenix.js"
+({
+    default: plugin({
+        start({ phoenix, settings, logger, cleanup }) {
+            cleanup(
+                phoenix.on('MESSAGE_CREATE', message => {
+                    if (settings.get('hideBots') && message.author?.bot) return false
+                }),
+            )
+            logger.log('started')
+        },
+    }),
+})
+```
+
+- Start the expression on the first line. A line break right after `return` makes the bundle return nothing.
+- Use the `phoenix` object on the scope, or the `valenced` argument, which holds the same functions.
+- Place it at the path named in the manifest. The CLI skips a file at that path, and the template's Gradle packaging copies it into the ZIP as-is.
+
+## Lifecycle
+
+A Phoenix plugin has two lifecycles:
+
+```ts
+interface PhoenixPluginOptions {
+    start?(scope: PhoenixPluginScope): unknown
+    stop?(scope: PhoenixPluginScope): unknown
+}
+```
+
+`start` runs when Phoenix starts, when the user enables the plugin, and after the plugin installs if it is enabled. `stop` runs when the plugin stops, such as when the user disables it. Both can be `async`.
+
+## The scope
+
+```ts
+interface PhoenixPluginScope {
+    cleanup(...callbacks: Array<() => unknown>): void
+    logger: {
+        log(message: unknown): void
+        warn(message: unknown): void
+        error(message: unknown): void
+    }
+    phoenix: typeof import('@valenced/phoenix') &
+        typeof import('@valenced/phoenix/gateway') & {
+            ui: typeof import('@valenced/phoenix/ui')
+            bytes: typeof import('@valenced/phoenix/bytes')
+        }
+    callNativeMethod(name: string, args?: unknown[]): unknown
+    settings: {
+        get<T = unknown>(key: string): T
+        set(key: string, value: string | number | boolean | string[] | number[]): Promise<void>
+        subscribe(key: string, listener: (value: unknown) => void): () => void
+    }
+    plugin: {
+        id: string
+        manifest: { id: string }
+        reportError(error: unknown): void
+    }
+}
+```
+
+| Member | Description |
+| --- | --- |
+| `cleanup` | Registers callbacks that run in reverse order when the plugin stops. |
+| `logger` | Writes to `adb logcat`, prefixed with your plugin ID. |
+| `phoenix` | The gateway and frame hooks described below, plus the `ui` and `bytes` frame codecs. |
+| `callNativeMethod` | Calls a [native method](/docs/plugin-development/api-reference/native#custom-native-methods) synchronously and returns its result. |
+| `settings` | Reads and writes your [settings](/docs/plugin-development/api-reference/settings). Subscriptions are removed when the plugin stops. |
+| `plugin.reportError` | Logs an error for your plugin. |
+
+Errors thrown by `start`, `stop`, cleanups and setting listeners are logged to `adb logcat`.
+
+## Gateway events
+
+`phoenix.on(event, listener)` listens to a gateway event, such as `MESSAGE_CREATE`. The listener receives the parsed payload before Phoenix sees it, on Phoenix's store thread.
+
+| Return value | Effect |
+| --- | --- |
+| `undefined` | Passes the event on. |
+| `false` | Drops the event. Later listeners don't run. |
+| Any other value | Replaces the payload for Phoenix and for the listeners after it. |
+
+`on` returns a function that removes the listener.
+
+## Frame hooks
+
+Phoenix's native host and its JavaScript side exchange binary frames. The frame hooks expose them as `Uint8Array` payloads. These are low level, and the frame format is Discord's own.
+
+| Hook | Frames | Listener |
+| --- | --- | --- |
+| `phoenix.onOps(listener)` | UI operations sent to the host. | `(bytes) => Uint8Array \| false \| undefined` |
+| `phoenix.onInvoke(listener)` | Invoke calls sent to the host. | `(bytes) => Uint8Array \| false \| undefined` |
+| `phoenix.onDispatch(listener)` | Dispatch frames the host sends to the JavaScript side. | `(handle, bytes) => Uint8Array \| boolean \| undefined` |
+
+For `onOps` and `onInvoke`, return `undefined` to pass the frame on, `false` to drop it, or bytes to replace it. For `onDispatch`, returning a boolean skips the host and returns that value. The first listener to return a boolean wins. Each hook returns a function that removes the listener.
+
+## Native code
+
+A plugin's `dist.android` part loads the same way in both clients. Use it for work that does not depend on either JavaScript runtime.

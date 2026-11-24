@@ -33,6 +33,8 @@ When you run `build`, the CLI scans each folder inside your plugins directory fo
 2. The manifest doesn't specify a `dist.script` (indicating a native-only plugin).
 3. The manifest defines `dist.script`, but no matching entry file exists. In this case, the CLI logs a warning and proceeds with the remaining plugins.
 
+A plugin with `dist.phoenix` also gets a [Phoenix bundle](#phoenix-bundles).
+
 ## Entry file resolution
 
 For each plugin with a JavaScript component, the CLI automatically detects the entrypoint by looking for these file names in order:
@@ -129,6 +131,29 @@ Valenced includes hidden modules that expose low-level client internals for debu
 ```
 
 You must also declare `valenced.api.hidden` in your plugin manifest dependencies. Because hidden APIs require users to enable **Developer Mode** in their Valenced settings, you should mark this dependency as optional (`"optional": true`) and gracefully handle cases where it isn't available.
+
+## Phoenix bundles
+
+When the manifest sets `dist.phoenix`, the CLI also builds a [Phoenix](/docs/plugin-development/api-reference/phoenix) entry into `plugins/<name>/build/phoenix/index.js`. It looks for these files in order:
+
+```text
+js/phoenix.ts    js/phoenix.js
+src/phoenix.ts   src/phoenix.js
+phoenix.ts       phoenix.js
+```
+
+A file at the path named by `dist.phoenix` is a prebuilt bundle, so the CLI skips it. Without an entry, the CLI skips the Phoenix build silently.
+
+The Phoenix bundle uses the same transforms and output format. Only these imports are mapped:
+
+| Import | Runtime property |
+| --- | --- |
+| `@valenced/phoenix` | `valenced.phoenix` |
+| `@valenced/phoenix/gateway` | `valenced.phoenix` |
+| `@valenced/phoenix/ui` | `valenced.phoenix.ui` |
+| `@valenced/phoenix/bytes` | `valenced.phoenix.bytes` |
+
+Importing `react`, `react-native`, a bundled third-party package or any other `@valenced/*` module fails the Phoenix build. Importing `@valenced/phoenix` from the React Native entry fails too. Type-only modules, such as `@valenced/phoenix/types`, are stripped in both.
 
 ## Inlining assets
 

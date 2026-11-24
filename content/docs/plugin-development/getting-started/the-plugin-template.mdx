@@ -110,6 +110,7 @@ Every plugin directory must contain a `manifest.json`. This file serves as the d
 | `contributors` | No | List of other contributors, in the same format as `author`. |
 | `version` | Yes | Version string following the Valenced [version format](/docs/plugin-development/getting-started/your-first-plugin#version-format). |
 | `dependencies` | No | Map of plugin IDs and version constraints that this plugin depends on. |
+| `settings` | No | Settings Valenced renders and stores for the plugin. See [Settings](/docs/plugin-development/api-reference/settings). |
 | `dist` | Yes | Relative paths to compiled artifacts within the final ZIP package. |
 
 <Callout type="warn" title="Plugin IDs are permanent">
@@ -127,11 +128,13 @@ interface PluginManifest {
     icon?: string       // Discord asset name or data: URI
     version: string     // version string
     dependencies?: Record<string, PluginDependencyConstraint> // dependencies keyed by plugin ID
+    settings?: PluginSettingDefinition[] // see Settings
     dist?: PluginDist   // artifact paths inside plugin ZIP
 }
 
 interface PluginDist {
     script?: string     // path to compiled JS bundle
+    phoenix?: string    // path to the Phoenix JS bundle
     android?: {
         path: string    // path to compiled Kotlin/Java JAR
         class: string   // class exposing `plugin { }` instance
@@ -210,9 +213,10 @@ The `dist` section informs the Valenced loader which compiled artifacts to execu
 ```
 
 - `script`: Relative path to the bundled JavaScript file inside the ZIP.
+- `phoenix`: Relative path to the JavaScript bundle for Discord's [Phoenix](/docs/plugin-development/api-reference/phoenix) client. The CLI does not build it. Put the file at this path in the plugin folder, and Gradle packages it as-is.
 - `android`: Configuration for the native Android component (only include this if your plugin has native code).
 
-Both paths are relative to the root of the packaged plugin ZIP archive.
+All paths are relative to the root of the packaged plugin ZIP archive.
 
 ## Native plugins with Kotlin
 
